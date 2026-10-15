@@ -1,14 +1,15 @@
 # HTTP 触发方案（摔倒/起立 + 完成回调）
 
-> 状态：**✅ 已部署并闭环实测成功（2026-10-13）**
+> 状态：**✅ 双机部署并闭环验收通过（2026-10-14）**
 > 阶段 1（无回调冒烟）✅ + 阶段 2（本机回调）✅ 均通过；阶段 3（公网回调）待定目标
 > 实际部署形态与本文档假设的差异：
-> - 机器人 IP 已变为 `192.168.137.72`（RobotLink 热点网段）
+> - **双机器人**：1号 `192.168.137.72` / 2号 `192.168.137.172`，协议完全相同（下文示例以 1号 为例，
+>   换 IP 即可控制 2号；回调里的 `robot_ip` 字段自动区分是哪台）
 > - 回调接收器实跑在 **Windows 本机**（`C:\robot\cb_listener.py`，标准库版，:9000）
 >   → 回调地址填 `http://192.168.137.1:9000/robot-callback`（电脑热点网关）
 > - **PowerShell 触发必须用 Invoke-RestMethod**（curl.exe 传 JSON 会被 PS 5.1 剥内层引号）
-> - fall_server 以 nohup 运行（未配 systemd，机器人重启后需手动重启）
-> 姊妹文档：[NOTES.md](NOTES.md)（架构与运维）
+> - fall_server 由 **systemd 常驻**（`fall-server.service`，开机自启+崩溃自愈）
+> 姊妹文档：[NOTES.md](NOTES.md)（架构与运维）、[部署手册.md](部署手册.md)（从零部署）
 
 ---
 
@@ -326,6 +327,8 @@ WantedBy=multi-user.target
 启用：`sudo systemctl enable --now fall-server`（日志：journalctl -u fall-server -f）
 
 ## 七、触发方式速查（curl 实测规则，2026-10-13 验证）
+
+> 💡 双机：把示例里的 IP 换成 `192.168.137.172` 就是控制 2号，协议一字不差。
 
 ### PowerShell（你的主终端）
 

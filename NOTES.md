@@ -1,10 +1,11 @@
 # TonyPi 机器人开发笔记
 
-> 最后更新：2026-10-14（双机器人体系上线 + 自足部署包）
+> 最后更新：2026-10-14 午后（双机验收通过 + 部署包成军）
 > 面向使用者的内容在前（第〇~三章），技术细节与应急手册在后
 >
 > 🚀 **从零部署 / 换新机器人**：看 [部署手册.md](部署手册.md)（源码在 `src/`，Windows 镜像在 `C:\robot\kit\`，不需要 AI 协助即可完成）
 > 🩺 **硬件不动了**：看 `src/diagnostics/README.md` 的诊断阶梯（哔声→IMU→裸串口→重插排座）
+> ☁️ **远程仓库**：https://github.com/DylanMing/hiwonder-pi-liedown （推送：WSL2 里 `git push` 首次要 PAT 令牌，输一次永久存；或借道 Windows 已存凭据——镜像到 C: 后 `git -C <路径> push`）
 
 ---
 
@@ -13,12 +14,13 @@
 | | 1号（原机） | 2号（备份机） |
 |---|---|---|
 | IP（RobotLink 网段） | `192.168.137.72` | `192.168.137.172` |
-| 状态 | 配置完备，随时开机即用 | 配置完备，**当前开机运行中** |
+| MAC（wlan0，认机铁证） | `88:a2:9e:00:b2:ec` | `88:a2:9e:00:b3:07` |
+| 状态 | 双机验收通过（2026-10-14） | 双机验收通过（2026-10-14）；⚠️ 电池体质弱，用前充满 |
 | SSH / HTTP | `ssh pi@192.168.137.72` / `:8090` | `ssh pi@192.168.137.172` / `:8090` |
 | 桌面快捷方式 | `机器人-摔倒` 等 4 个 | `机器人2-摔倒` 等 4 个 |
 | 兜底热点 | HW-9E00B2EB（WPA/hiwonder） | HW-BACKUP2（WPA/hiwonder） |
 | WiFi 优先级 | RobotLink 20 > 自家 1 | RobotLink 20 > 自家 1 |
-| fall_server 自启 | ❌ nohup（重启需手动） | ✅ systemd（2026-10-14 配好，重启自动回） |
+| fall_server 自启 | ✅ systemd（2026-10-14 双机配齐，重启自动回） | ✅ systemd（2026-10-14 配好，重启自动回） |
 
 - 两台可**同时开机**（不同 IP 不冲突）；回调自动带 `robot_ip` 字段可区分是谁
 - 回调监视窗口（`机器人-回调监视`）同时显示两台的回调
@@ -69,16 +71,16 @@ Invoke-RestMethod -Method Post -Uri http://192.168.137.72:8090/stand -ContentTyp
 服务器收到坏 JSON（表现为 `"callback":false`、request_id 变自动值）。**一律 Invoke-RestMethod**。
 （Linux/WSL2 里真 curl 无此问题。）
 
-### HTTP 服务详情（已部署，2026-10-13 闭环实测）
+### HTTP 服务详情（已部署，双机闭环实测通过）
 
 | 组件 | 位置 | 状态 |
 |---|---|---|
-| 机器人端服务 | `/home/pi/fall_server.py`（Flask :8090） | nohup 运行中，**机器人重启后需手动重启**（见下） |
-| 本机回调接收器 | `C:\robot\cb_listener.py`（:9000） | 后台运行中，**电脑重启后需手动重启**（见下） |
+| 机器人端服务 | `/home/pi/fall_server.py`（Flask :8090） | **systemd 常驻**（`fall-server.service`），开机自启+崩溃自动重启，**无需手动管** |
+| 本机回调接收器 | `C:\robot\cb_listener.py`（:9000） | 后台运行中，**电脑重启后需手动重启**（见下；可配计划任务自启） |
 | 防火墙 | 规则 `robot-callback-9000`（TCP 9000 入站） | 已配置 |
 
-重启机器人端：`ssh pi@192.168.137.72 "nohup python3 /home/pi/fall_server.py > /home/pi/fall_server.log 2>&1 &"`
-重启本机监听器：`Start-Process -WindowStyle Hidden python -ArgumentList C:\robot\cb_listener.py -RedirectStandardOutput C:\robot\listener.log -RedirectStandardError C:\robot\listener.err`
+机器人端异常时查/重启：`ssh pi@<机器人IP> "systemctl status fall-server"` / `sudo systemctl restart fall-server`
+重启本机监听器：`powershell -File C:\robot\kit\windows\install_listener.ps1`
 看回调日志：`Get-Content C:\robot\listener.log -Tail 10 -Wait`
 API/回调格式：[HTTP触发方案.md](HTTP触发方案.md)
 
@@ -213,55 +215,46 @@ sudo nmcli con up HW-9E00B2EB
 依赖链：机器人有网 ⟸ 电脑开着 RobotLink 热点 ⟸ 电脑开机 + WiFi 连着 acn（外网）。
 调优先级命令：`sudo nmcli con modify <名字> connection.autoconnect-priority <数字>`
 
-### 机器人重启后（约 1 分钟回网）
+### 机器人重启后（约 1~2 分钟回网）
 
-1. 等蓝灯闪 + 蜂鸣；机器人自动连 RobotLink（rob 连接 autoconnect=yes）
+1. 等蓝灯闪 + 蜂鸣"哔"；机器人自动连 RobotLink（优先级 20）
 2. **前提：电脑的 RobotLink 热点开着**（电脑重启后热点默认关闭 → 先开热点）
-3. IP 通常还是 .72；变了喊我扫
-4. **重启 fall_server**（nohup 不跨重启）：见第〇章命令
-5. 三条 autoconnect 连接（rob/acn/HW-9E00B2EB）谁可见谁抢连——当前环境 rob 必胜
+3. **fall_server 由 systemd 自动拉起**，无需任何手动操作
+4. IP 通常不变（.72/.172）；两台同时重启可能互换 → `scan_robots.ps1` 扫
+5. ⚠️ 机器人无硬件时钟：崩溃式断电后时间会倒退（软件功能不受影响，
+   回调时间戳会错 → 跑一遍 `fix_robot.ps1` 校准）
 
 ### 电脑重启后
 
-1. 开热点：`powershell -File C:\Users\Public\hotspot.ps1`（或从 bin/ 拷过去执行；
-   电脑 WiFi 先连回 acn-mobile-hotspot 保持外网）
-2. 重启监听器（第〇章命令）
-3. 机器人会自动重连热点；IP 若变则喊我扫
+1. 开热点：`powershell -File C:\robot\kit\windows\hotspot_on.ps1`
+   （电脑 WiFi 先连回 acn-mobile-hotspot 保持外网）
+2. 重启监听器：`powershell -File C:\robot\kit\windows\install_listener.ps1`
+3. 机器人自动重连热点；IP 若变则 `scan_robots.ps1` 扫
 
-### 换机器人流程（2026-10-13 版，约 15 分钟）
+### 换机器人流程（2026-10-14 版，约 10 分钟）
 
-> 新机 = 出厂状态：不认识 RobotLink，只广播自己的热点 HW-XXXX。
-> 原则：**不动电脑 WiFi**（动了我就断网），初接触走手机桥接。
+> **完整手册看 [部署手册.md](部署手册.md)**（源码 `src/`，Windows 镜像 `C:\robot\kit\`），下面是速览。
+> 新机 = 出厂状态：不认识 RobotLink，只广播自己的热点 HW-XXXX（密码 hiwonder）。
 
-**阶段 1 · 初接触（手机桥接复活，装备仍在手机上）**
-1. 新机器人开机 → 自动广播 HW-XXXX（开放或密码 hiwonder）
-2. 手机连它：`adb shell cmd wifi connect-network HW-XXXX wpa2 hiwonder`（开放网络去掉密码参数）
-3. 判断机器人 IP：手机 `ip -4 addr` 看网段（10.42.0.x / 192.168.149.x），网关即机器人
-4. 改 relay.sh 的 ROBOT=<IP> → push → kill_relay_v2.sh 清旧 → setsid 重启中继
-5. `adb forward tcp:2222 tcp:8022` → 桥接复活（portproxy 已持久）
-6. `ssh-keygen -R "[172.18.96.1]:2222"`（Windows 侧同 `-R "[127.0.0.1]:2222"`）→ sshpass 首登
-
-**阶段 2 · 部署（全部重装）**
-```sh
-# 公钥（Windows %USERPROFILE%\.ssh\id_ed25519.pub + WSL ~/.ssh/id_ed25519.pub）
-mkdir -p ~/.ssh && echo "<公钥内容>" >> ~/.ssh/authorized_keys
-# 脚本：fall.py / stand.py / fall_demo.py / fall_server.py （scp 推送）
-# WiFi：sudo nmcli con add type wifi con-name RobotLink ifname wlan0 ssid RobotLink
-#       wifi-sec.key-mgmt wpa-psk wifi-sec.psk "hiwonder" + autoconnect-priority 20
+```powershell
+# 1. 手机/电脑连机器人的 HW-XXXX 热点 → ssh pi@10.42.0.1（密码 raspberrypi）
+#    配它连 RobotLink:
+#    sudo nmcli dev wifi connect RobotLink password hiwonder ifname wlan0
+# 2. 种公钥（手输一次密码 raspberrypi）：
+type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh pi@<新IP> "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+# 3. 一键部署（脚本+systemd）：
+powershell -File C:\robot\kit\windows\deploy_robot.ps1 -RobotIP <新IP>
+# 4. 调优（WiFi优先级+兜底热点+时钟，兜底热点名每台起不同名）：
+powershell -File C:\robot\kit\windows\fix_robot.ps1 -RobotIP <新IP> -ApName HW-新机名
+# 5. 快捷方式 + 验收：
+powershell -File C:\robot\kit\windows\make_shortcuts.ps1 -RobotIP <新IP> -Prefix 机器人N
+powershell -File C:\robot\kit\windows\test_robot.ps1 -RobotIP <新IP>
 ```
-
-**阶段 3 · 切回直连**
-7. 电脑 RobotLink 热点开着 → 机器人 `sudo nmcli con up RobotLink`
-8. 手机回 acn（桥接下岗）
-9. Windows 侧 banner 扫描 192.168.137.0/24 找新 IP（找 "SSH-2.0-...Debian"）
-10. 更新桌面 5 个快捷方式 IP（摔倒/起立/状态/HTTP摔倒/回调监视）
-11. nohup 启动 fall_server → 测 /status → 测摔倒+回调闭环
 
 ### IP 变了怎么找
 
-1. banner 验证扫描 192.168.137.0/24（从 Windows 侧！WSL2 路由不通）：
-   找返回 `SSH-2.0-OpenSSH_9.2p1 Debian` 的 IP
-2. 桌面快捷方式里的 IP 同步更新（三个 .cmd + HTTP摔倒.cmd）
+`powershell -File C:\robot\kit\windows\scan_robots.ps1`（banner 验证扫描，
+WSL2 路由不通必须从 Windows 侧跑）→ 找到新 IP 后重跑 make_shortcuts.ps1
 
 ### 桥接方案回退（直连失效时的应急）
 
@@ -273,11 +266,16 @@ mkdir -p ~/.ssh && echo "<公钥内容>" >> ~/.ssh/authorized_keys
 
 | 症状 | 根因 | 解法 |
 |---|---|---|
-| **软件全成功但机器人零动作** | 扩展板 MCU 挂死（IMU 读数=None 即确诊；树莓派 vcgencmd=0x0 却正常） | **整机断电 10 秒重启**（2026-10-14 实测有效）；Pi 重启救不了 MCU |
-| **验收标准（重要）** | 回调 ok=True 只证明脚本跑完，不证明物理动作 | **IMU 前后对比才是铁证**：站立重力在X轴(-0.96,-0.03)，躺平转Z轴(-0.04,-1.04) |
-| ssh 超时/拒绝 | IP 变 / 设备离线 / 热点没开 | 见第四章 |
+| **软件全成功但机器人零动作** | 扩展板 MCU 挂死 或 串口断连——用诊断阶梯区分（`src/diagnostics/README.md`） | 见下两行；完整阶梯：哔声→IMU→裸串口 |
+| MCU 挂死（无哔 或 哔了但 IMU=None 且裸串口有数据） | 电池电压跌落致芯片闩锁 | **整机断电 15 秒重启**（2026-10-14 双次实测有效）；树莓派软重启救不了 MCU |
+| **开机有哔 + IMU=None + 裸串口静默**（2026-10-14 实锤） | **树莓派与扩展板之间 40 针排座松动**（供电针接触好但串口针悬空：能开机、能哔、不通信） | 断电 → 把树莓派从扩展板拔起 → 对准重插到底 → 上电（实测一次根治，扛过重启） |
+| **验收标准（重要）** | 回调 ok=True 只证明脚本跑完，不证明物理动作 | **IMU 前后对比才是铁证**：站立重力在X轴(-0.96,-0.03)，躺平转Z轴(-0.04,-1.04)；终极验收靠肉眼 |
+| ssh 超时/拒绝 | IP 变 / 设备离线 / 热点没开 | `scan_robots.ps1` 扫 |
 | 全网段端口"开放" | 安卓热点幽灵 TCP 应答 | 扫描必须验 banner |
 | 机器人连不上 5GHz 热点 | WiFi 模组不支持高段信道(149+) | 热点改 2.4GHz |
+| 机器人时间倒退一天 | 无硬件时钟 + 崩溃式断电（fake-hwclock 回退） | `fix_robot.ps1` 校准；NTP 走不通（VPN 挡 UDP） |
+| `get_battery()` 返回 None | 本板固件不支持电压查询（健康机器人也 None） | 别用它判断电池——看症状（动作后崩溃≈电池虚） |
+| 2号 电池体质弱（2026-10-14 判定） | 备份机长期存放自放电：真动作后连环崩 | 用前充满电；反复 MCU 挂死先怀疑电池 |
 | 机器人网络孤岛 | con down 阻断自愈 | 断电重启 |
 | nmcli 报 Insufficient privileges | 非交互 SSH 无权 | 加 sudo |
 | **远程命令静默自杀（零输出）** | `pkill -f xxx` 匹配到执行命令的 shell 自己 | 模式写成 `pkill -f 'fal[l]_server'` 括号正则，或分两步执行 |
@@ -343,22 +341,25 @@ sshpass 首登（pi/raspberrypi）→ 部署公钥 + fall/stand/fall_demo 脚本
 |---|---|
 | 电脑热点（当前） | `RobotLink` / `hiwonder`（Windows 移动热点，2.4GHz） |
 | 电脑外网 WiFi | `acn-mobile-hotpot` / `td1234567`（2.4GHz 蜂窝） |
-| 机器人 IP（当前） | `192.168.137.72`（RobotLink 网段，DHCP） |
+| 机器人 IP | 1号 `192.168.137.72` / 2号 `192.168.137.172`（DHCP，可能漂移） |
 | 电脑热点网关 IP | `192.168.137.1`（= 回调目标地址） |
-| 机器人 SSH/VNC | `pi` / `raspberrypi` |
-| 机器人自身热点（停用中） | `HW-9E00B2EB`，两套 IP 见第六章 |
-| SSH 密钥 | WSL2 `~/.ssh/id_ed25519` + Windows `%USERPROFILE%\.ssh\`，均已部署 |
+| 机器人 SSH/VNC | `pi` / `raspberrypi`（两台相同） |
+| 机器人兜底热点 | 1号 `HW-9E00B2EB` / 2号 `HW-BACKUP2`，密码均 `hiwonder` |
+| SSH 密钥 | WSL2 `~/.ssh/id_ed25519` + Windows `%USERPROFILE%\.ssh\`，两台均已部署 |
 | 手机（桥接备用） | Xiaomi 12S Pro（序列号略），adb 在 `C:\Users\Public\platform-tools\` |
 | HTTP 服务端口 | 机器人 :8090（fall_server）；本机 :9000（cb_listener） |
+| 部署包 | WSL `~/hiwonder/src/` ＝ Windows 镜像 `C:\robot\kit\`（改代码改一处，cp 镜像另一处） |
 
 ## 八、待办 / 展望
 
 - [x] **HTTP 触发方案：已上线并闭环实测**（2026-10-13）→ [HTTP触发方案.md](HTTP触发方案.md)
-- [x] fall_server systemd 自启（2026-10-14，**2号已配**；1号下次开机时照抄：
-      scp C:\robot\fall-server.service → cp 到 /etc/systemd/system/ →
-      `sudo systemctl daemon-reload && sudo systemctl enable --now fall-server`）
-- [ ] 本机监听器开机自启（任务计划程序）
+- [x] **双机器人体系上线**（2026-10-14）：2号 全套部署 + 双机同网验收（摔倒+回调 ×2）
+- [x] fall_server systemd 自启（2026-10-14 **双机配齐**，deploy_robot.ps1 一键搞定）
+- [x] **自足部署包**（2026-10-14）：[部署手册.md](部署手册.md) + `src/` + Windows 镜像 `C:\robot\kit\`
+- [x] 硬件诊断方法论（哔声→IMU→裸串口阶梯，含 40 针排座重插术）→ `src/diagnostics/`
+- [ ] 本机监听器开机自启（任务计划程序，手册第六章有现成命令）
 - [ ] 机器人静态 IP 或 mDNS（免 IP 漂移）
 - [ ] 公网回调测试（阶段 3，需回调目标 URL）
 - [ ] slow_fall 慢摔动作移植（make_fall.py 重写，5 分钟）
 - [ ] IMU 触发的受控摔倒 / 动作编排 / 外网直触发（Tailscale）
+- [ ] 2号 电池保养提醒：用前充满（体质弱，动作后崩过）

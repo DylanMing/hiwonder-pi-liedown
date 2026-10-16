@@ -326,47 +326,100 @@ WantedBy=multi-user.target
 ```
 启用：`sudo systemctl enable --now fall-server`（日志：journalctl -u fall-server -f）
 
-## 七、触发方式速查（curl 实测规则，2026-10-13 验证）
+## 七、curl 全家桶（触发方式速查，实测规则 2026-10-13/14 验证）
 
-> 💡 双机：把示例里的 IP 换成 `192.168.137.172` 就是控制 2号，协议一字不差。
+> 💡 协议双机一字不差，只有 IP 不同：1号 `192.168.137.72`，2号 `192.168.137.172`。
+> 下面以 1号 为例；控制 2号 就把 IP 换成 `.172`。
 
-### PowerShell（你的主终端）
+### 最常用五连（复制即用，PowerShell）
+
+```powershell
+# 1. 看状态（pose: standing=能摔 / lying=要先起立 / busy: true=动作中）
+curl.exe http://192.168.137.72:8090/status
+
+# 2. 直接摔倒（无任何参数，最简形态）
+curl.exe -X POST http://192.168.137.72:8090/fall
+
+# 3. 直接起立（无参数 = 仰卧爬起）
+curl.exe -X POST http://192.168.137.72:8090/stand
+
+# 4. 摔倒 + 完成后回调通知本机
+curl.exe -X POST http://192.168.137.72:8090/fall -H "Content-Type: application/json" -d '{\"callback_url\":\"http://192.168.137.1:9000/robot-callback\",\"request_id\":\"my-test\"}'
+
+# 5. 看回调是否收到（本机监听器日志）
+Get-Content C:\robot\listener.log -Tail 10
+```
+
+### 双机对照（想指哪打哪，改 IP 就行）
+
+```powershell
+# 1号 摔倒 / 起立
+curl.exe -X POST http://192.168.137.72:8090/fall
+curl.exe -X POST http://192.168.137.72:8090/stand
+# 2号 摔倒 / 起立
+curl.exe -X POST http://192.168.137.172:8090/fall
+curl.exe -X POST http://192.168.137.172:8090/stand
+```
+
+### PowerShell 进阶变体
 
 ```powershell
 # ── GET（无 body，怎么写都对）──
 curl.exe http://192.168.137.72:8090/status                    # 机器人状态
 curl.exe http://192.168.137.1:9000/health                     # 本机监听器状态
 
-# ── POST 无 body（安全简单）──
-curl.exe -X POST http://192.168.137.72:8090/fall              # 摔倒
-curl.exe -X POST http://192.168.137.72:8090/stand             # 起立
-
 # ── POST 带 JSON（内层引号必须 \" 转义，实测可用）──
+# 指定动作摔倒（bow=鞠躬 sit_ups=仰卧起坐 stand_slow=慢速站立…）
 curl.exe -X POST http://192.168.137.72:8090/fall -H "Content-Type: application/json" -d '{\"action\":\"bow\"}'
+# 起立姿势选择：back=仰卧起立(默认) front=俯卧起立 reset=硬回站立
 curl.exe -X POST http://192.168.137.72:8090/stand -H "Content-Type: application/json" -d '{\"mode\":\"front\"}'
-curl.exe -X POST http://192.168.137.72:8090/fall -H "Content-Type: application/json" -d '{\"callback_url\":\"http://192.168.137.1:9000/robot-callback\",\"request_id\":\"t1\"}'
+# 回调 + 请求号 + 附加数据（回调原样带回）
+curl.exe -X POST http://192.168.137.72:8090/fall -H "Content-Type: application/json" -d '{\"callback_url\":\"http://192.168.137.1:9000/robot-callback\",\"request_id\":\"t1\",\"callback_data\":{\"who\":\"me\"}}'
+# 强制执行（躺着也要再"摔"一遍——绕过 409 姿态保护，慎用）
+curl.exe -X POST http://192.168.137.72:8090/fall -H "Content-Type: application/json" -d '{\"force\":true}'
 
 # ── 或 PowerShell 原生写法（无需转义，最省心）──
 Invoke-RestMethod http://192.168.137.72:8090/status
-Invoke-RestMethod -Method Post -Uri http://192.168.137.72:8090/fall -ContentType "application/json" -Body '{"action":"bow"}'
+Invoke-RestMethod -Method Post -Uri http://192.168.137.72:8090/fall
+Invoke-RestMethod -Method Post -Uri http://192.168.137.72:8090/stand -ContentType "application/json" -Body '{"mode":"front"}'
 ```
 
 ⚠️ **PS 5.1 陷阱实测结论**：`-d '{"a":"b"}'`（裸引号）→ 服务器收到坏 JSON 静默用默认值
 （症状：`callback:false`、request_id 变自动值）；`-d '{\"a\":\"b\"}'`（转义）→ 正确解析 ✅
 
-### CMD（cmd.exe）
+### CMD（cmd.exe，引号规则又不一样：`\"` 转义）
 
 ```cmd
+curl -X POST http://192.168.137.72:8090/fall
+curl -X POST http://192.168.137.72:8090/stand
 curl -X POST http://192.168.137.72:8090/fall -H "Content-Type: application/json" -d "{\"action\":\"bow\"}"
 ```
 
 ### Linux / 同热点其他设备（真 curl，引号原样）
 
 ```bash
+curl -X POST http://192.168.137.72:8090/fall
+curl -X POST http://192.168.137.72:8090/stand
 curl -X POST http://192.168.137.72:8090/fall -H "Content-Type: application/json" \
   -d '{"action":"bow","callback_url":"http://192.168.137.1:9000/robot-callback","request_id":"t1","callback_data":{"who":"linux"}}'
 ```
 （注：WSL2 → 机器人路由当前被 VPN 干扰不通，需从 Windows 侧发）
+
+### 响应速查（收到什么算正常）
+
+| 请求 | 正常响应 | 含义 |
+|---|---|---|
+| `POST /fall` | `{"status":"accepted", ...}` HTTP 202 | 已受理，后台执行中（约 4s 完成） |
+| `POST /stand` | `{"status":"accepted", ...}` HTTP 202 | 同上（约 5s） |
+| 忙时再触发 | HTTP 409 `"busy"` | 等当前动作做完 |
+| 躺着再摔 | HTTP 409 `"already lying"` | 姿态保护；想强制就带 `force:true` |
+| `GET /status` | JSON：pose / busy / last_action / last_callback / robot_ip | 终极排障入口 |
+
+### 常用动作组（`"action":"名字"`，共 118 个）
+
+`lie_down`（摔倒默认）· `bow`（鞠躬）· `sit_ups`（仰卧起坐）· `stand`（站立复位）·
+`stand_slow`（慢速站立）· `stand_up_back/front`（起立）
+全部列表：`ssh pi@192.168.137.72 "ls /home/pi/TonyPi/ActionGroups/"`
 
 ## 八、测试计划（三阶段）
 
